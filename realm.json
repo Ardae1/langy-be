@@ -1,0 +1,20 @@
+{
+  "realm": "master",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "language-service-client",
+      "redirectUris": [
+        "http://localhost:3000/*"
+      ],
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "bearerOnly": false,
+      "secret": "language-service-secret",
+      "webOrigins": [
+        "http://localhost:3000"
+      ]
+    }
+  ]
+}

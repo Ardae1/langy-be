@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: language-service-app
+    depends_on:
+      - keycloak
+      - db
+      - loki
+      - prometheus
+      - jaeger
+    ports:
+      - "8080:8080"
+    environment:
+      # Database configuration
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=language_service_db
+      - DB_USER=user
+      - DB_PASSWORD=password
+      # Keycloak configuration
+      - KEYCLOAK_DOMAIN=keycloak:8080
+      - KEYCLOAK_REALM=master
+      - KEYCLOAK_CLIENT_ID=language-service-client
+      - KEYCLOAK_CLIENT_SECRET=language-service-secret
+      # OpenTelemetry configuration
+      - OTEL_SERVICE_NAME=language-service
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://app:8080/api/v1/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: keycloak-service
+    depends_on:
+      - db
+    ports:
+      - "8180:8080"
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_DB=postgres
+      - KC_DB_URL_HOST=db
+      - KC_DB_URL_DATABASE=language_service_db
+      - KC_DB_USERNAME=user
+      - KC_DB_PASSWORD=password
+      - KC_HEALTH_ENABLED=true
+      - KC_HTTP_RELATIVE_PATH=/auth
+    volumes:
+      - ./realm.json:/opt/keycloak/data/import/realm.json
+    command:
+      - start-dev
+      - --import-realm
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://keycloak:8080/auth/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: postgres:15-alpine
+    container_name: postgres-service
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=language_service_db
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: prometheus-service
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: loki-service
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: grafana-service
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning/
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.56
+    container_name: jaeger-service
+    ports:
+      - "6831:6831/udp" # Thrift TChannel
+      - "16686:16686" # Web UI
+      - "14268:14268" # HTTP Thrift
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:16686"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
