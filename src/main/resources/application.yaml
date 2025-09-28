@@ -47,3 +47,6 @@ logging:
     org.springframework: INFO
     io.opentelemetry: INFO
   name: language-service
+ai-model:
+    base-url: https://api.groq.com/openai/v1
+    model: llama-3.1-8b-instant

@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+
 @RestController
 @RequestMapping("/api/v1/paragraph")
 public class ParagraphController {
@@ -19,9 +21,9 @@ public class ParagraphController {
         this.paragraphService = paragraphService;
     }
 
-    //validation will be done here!! not in service
+    //add validation for request body
     @PostMapping("/generate")
-    public ResponseEntity<ParagraphResponse> generateParagraph(@RequestBody ParagraphRequest request) {
+    public ResponseEntity<ParagraphResponse> generateParagraph(@RequestBody ParagraphRequest request) throws IOException, InterruptedException {
         ParagraphResponse response = paragraphService.generateParagraph(request);
         return ResponseEntity.ok(response);
     }
