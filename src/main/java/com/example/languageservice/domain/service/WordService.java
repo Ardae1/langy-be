@@ -1,182 +1,339 @@
 package com.example.languageservice.domain.service;
 
-import com.example.languageservice.api.dto.WordEnhanceResponse;
-import com.example.languageservice.api.dto.WordExampleDto;
-import com.example.languageservice.domain.model.Word;
-import com.example.languageservice.domain.model.WordExample;
-import com.example.languageservice.domain.repository.WordExampleRepository;
-import com.example.languageservice.domain.repository.WordRepository;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.cache.annotation.Cacheable;
+import com.example.languageservice.api.dto.UserRandomWordRequest;
+import com.example.languageservice.api.dto.UserWordRequest;
+import com.example.languageservice.api.dto.WordDto;
+import com.example.languageservice.domain.model.*;
+import com.example.languageservice.domain.repository.*;
+import jakarta.persistence.EntityManager;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static com.example.languageservice.security.SecurityUtils.getCurrentUserId;
 
 @Service
+@RequiredArgsConstructor
 public class WordService {
 
-    private static final Logger log = LoggerFactory.getLogger(WordService.class);
-    private static final String SYSTEM_PROMPT = "You are an advanced German language teaching assistant with expertise in linguistics, pedagogy. Respond only in the following format:\n" +
-            "### <Word>\n" +
-            "V2: <Past Tense Form>\n" +
-            "V3: <Past Participle Form>\n" +
-            "Future: <Future Tense Form>\n" +
-            "Predicate Inflections:\n" +
-            "ich: <Conjugated Form for 'ich'>\n" +
-            "du: <Conjugated Form for 'du'>\n" +
-            "er/sie/es: <Conjugated Form for 'er/sie/es'>\n" +
-            "wir: <Conjugated Form for 'wir'>\n" +
-            "ihr: <Conjugated Form for 'ihr'>\n" +
-            "sie/Sie: <Conjugated Form for 'sie/Sie'>\n" +
-            "Examples:\n" +
-            "- Ich <Word> <Example Sentence for 'ich'>\n" +
-            "- Du <Word> <Example Sentence for 'du'>\n" +
-            "- Er/Sie/Es <Word> <Example Sentence for 'er/sie/es'>\n" +
-            "- Wir <Word> <Example Sentence for 'wir'>\n" +
-            "- Ihr <Word> <Example Sentence for 'ihr'>\n" +
-            "- Sie/Sie <Word> <Example Sentence for 'sie/Sie'>\n" +
-            "V2 Examples:\n" +
-            "- Ich <V2 Form> <Example Sentence for 'ich' with V2>\n" +
-            "- Du <V2 Form> <Example Sentence for 'du' with V2>\n" +
-            "- Er/Sie/Es <V2 Form> <Example Sentence for 'er/sie/es' with V2>\n" +
-            "- Wir <V2 Form> <Example Sentence for 'wir' with V2>\n" +
-            "- Ihr <V2 Form> <Example Sentence for 'ihr' with V2>\n" +
-            "- Sie/Sie <V2 Form> <Example Sentence for 'sie/Sie' with V2>\n" +
-            "V3 Examples:\n" +
-            "- Ich <V3 Form> <Example Sentence for 'ich' with V3>\n" +
-            "- Du <V3 Form> <Example Sentence for 'du' with V3>\n" +
-            "- Er/Sie/Es <V3 Form> <Example Sentence for 'er/sie/es' with V3>\n" +
-            "- Wir <V3 Form> <Example Sentence for 'wir'>\n" +
-            "- Ihr <V3 Form> <Example Sentence for 'ihr'>\n" +
-            "- Sie/Sie <V3 Form> <Example Sentence for 'sie/Sie'>\n" +
-            "Second-Language Acquisition Method:\n" +
-            "- <provide comprehensive and practical language examples using the word provided. Use the '1+2 approach' to create examples that help learners effectively internalize the word, its forms, and usage> \n" +
-            "Learning Tips:\n" +
-            "- <give info if there is any special condition or exception regarding the word>.\n" +
-            "Synonyms:\n" +
-            "- <Synonym 1>: <Example Sentence for Synonym 1>\n" +
-            "- <Synonym 2>: <Example Sentence for Synonym 2>\n" +
-            "Antonyms:\n" +
-            "- <Antonym 1>: <Example Sentence for Antonym 1>\n" +
-            "- <Antonym 2>: <Example Sentence for Antonym 2>";
-
     private final WordRepository wordRepository;
+    private final WordFormRepository wordFormRepository;
+    private final WordConjugationRepository wordConjugationRepository;
     private final WordExampleRepository wordExampleRepository;
-    private final HttpClient httpClient;
-    private final ObjectMapper objectMapper;
-    private final String llmApiUrl;
-    private final String apiKey;
+    private final WordTipRepository wordTipRepository;
+    private final WordRelationRepository wordRelationRepository;
+    private final UserWordRepository userWordRepository;
+    private final WordTranslationRepository wordTranslationRepository;
+    private final RedisService redisService;
+    private final LlmService llmService; // your AI client wrapper
+    private final EntityManager entityManager;
+
+    // ---------------- 1. GET FULL WORD ----------------
+    @Transactional(readOnly = true)
+    public WordDto getFullWord(Long wordId) {
+        Word word = wordRepository.findById(wordId)
+                .orElseThrow(() -> new IllegalArgumentException("Word not found"));
+
+        return WordDto.builder()
+                .id(word.getId())
+                .word(word.getWord())
+                .language(word.getLanguage().getCode())
+                .level(word.getLevel().name())
+                .forms(wordFormRepository.findByWordId(wordId).stream().map(WordForm::getForm).toList())
+                .conjugations(wordConjugationRepository.findByWordId(wordId)
+                        .stream().collect(Collectors.toMap(WordConjugation::getPerson, WordConjugation::getForm)))
+                .examples(wordExampleRepository.findByWordId(wordId).stream().map(WordExample::getSentence).toList())
+                .tips(wordTipRepository.findByWordId(wordId).stream().map(WordTip::getTip).toList())
+                .synonyms(wordRelationRepository.findSynonyms(wordId).stream().map(Word::getWord).toList())
+                .antonyms(wordRelationRepository.findAntonyms(wordId).stream().map(Word::getWord).toList())
+                .build();
+    }
+
+    // ---------------- 2. ASSIGN WORD TO USER ----------------
+    @Transactional
+    public void assignWordsToUser(List<Long> wordIdList, UUID userId) {
+        for (Long wordId : wordIdList) {
+            //query will change for lanugage search
+            boolean exists = userWordRepository.existsByUserIdAndWordId(userId, wordId);
+            if (!exists) {
+                Word wordRef = entityManager.getReference(Word.class, wordId);
+                User user = entityManager.getReference(User.class, userId); //makes sense?
+                Box box = entityManager.getReference(Box.class, BoxType.INIT.getId());
+
+                UserWord userWord = UserWord.builder()
+                        .id(UUID.randomUUID())
+                        .user(user)
+                        .word(wordRef)
+                        .language(wordRef.getLanguage()) // reuse from word
+                        .level(wordRef.getLevel())       // reuse from word
+                        .box(box)
+                        .accuracy(0.0)
+                        .lastSeen(Instant.now())
+                        .build();
+
+                userWordRepository.save(userWord);
+            }
+        }
+        redisService.addUserAssignedWords(userId, request.getLevel(), request.getSourceLanguage(), wordIdList);
+    }
+
+    // ---------------- 3. RANDOM WORDS ----------------
+    @Transactional
+    public List<WordDto> getRandomWords(UserRandomWordRequest request) {
+        UUID userId = request.getUserId();
+        String level = request.getLevel();
+        String language = request.getSourceLanguage();
+        int count = request.getCount();
+
+        // Step 1: Redis unseen
+        List<Long> redisWordIds = redisService.getRandomUnseenWordsForUser(userId, language, level, count);
+
+        // Step 2: DB fallback if needed
+        int remaining = count - redisWordIds.size();
+        List<Long> dbWordIds = remaining > 0
+                ? wordRepository.findRandomUnassignedWords(userId, level, remaining)
+                : List.of();
+
+        // Step 3: Aggregate so far
+        List<Long> allIds = new ArrayList<>();
+        allIds.addAll(redisWordIds);
+        allIds.addAll(dbWordIds);
+
+        // Step 4: If still missing → call LLM
+        List<WordDto> llmWords = new ArrayList<>();
+        if (allIds.size() < count) {
+            int needed = count - allIds.size();
+
+            // call LLM for fresh words
+            llmWords = llmService.generateWords(level, needed);
+
+            // save and assign
+            llmWords.forEach(word -> saveAndAssignWord(userId, word));
+
+            // also add to Redis level pool
+            redisService.addLevelWordIds(level, llmWords.stream().map(WordDto::getId).toList());
+        }
+
+        // Final: persist assignment of DB/Redis words
+        if (!allIds.isEmpty()) {
+            assignWordsToUser(allIds);
+        }
+
+        // Convert to DTOs
+        Stream<WordDto> dbAndRedisDtos = allIds.stream().map(this::getFullWord);
+        return Stream.concat(dbAndRedisDtos, llmWords.stream()).toList();
+    }
 
 
-    public WordService(WordRepository wordRepository,
-                       WordExampleRepository wordExampleRepository,
-                       HttpClient httpClient,
-                       ObjectMapper objectMapper,
-                       @Value("${llm.api.url}") String llmApiUrl,
-                       @Value("${llm.api.key}") String apiKey) {
-        this.wordRepository = wordRepository;
-        this.wordExampleRepository = wordExampleRepository;
-        this.httpClient = httpClient;
-        this.objectMapper = objectMapper;
-        this.llmApiUrl = llmApiUrl;
-        this.apiKey = apiKey;
+    // ---------------- 4. SAVE LLM WORD ----------------
+    @Transactional
+    public void saveAndAssignWord(WordDto wordDto) {
+        UUID userId = getCurrentUserId();
+        Language language = languageRepository.findByCode(languageCode)
+                .orElseThrow(() -> new IllegalArgumentException("Language not supported: " + languageCode));
+
+        Word word = wordRepository.findByWordAndLanguage(wordDto.getWord(), wordDto.getLanguage())
+                .orElseGet(() -> {
+                    Word newWord = new Word();
+                    newWord.setWord(wordDto.getWord());
+                    newWord.setLevel(wordDto.getLevel());
+                    return wordRepository.save(newWord);
+                });
+
+        Long wordId = word.getId();
+
+        // Step 2: Save forms (V2, V3, Future, etc.)
+        if (wordDto.getForms() != null) {
+            for (String form : wordDto.getForms()) {
+                if (wordFormRepository.findByForm(form).isEmpty()) {
+                    WordForm wf = new WordForm();
+                    wf.setWordId(wordId);
+                    wf.setForm(form);
+                    wf.setFormType(detectFormType(form, wordDto)); // helper
+                    wordFormRepository.save(wf);
+                }
+            }
+        }
+
+        // Step 3: Save conjugations
+        if (wordDto.getConjugations() != null) {
+            wordDto.getConjugations().forEach((person, form) -> {
+                if (wordConjugationRepository.findByForm(form).isEmpty()) {
+                    WordConjugation wc = new WordConjugation();
+                    wc.setWord(word);
+                    wc.setPerson(person);
+                    wc.setForm(form);
+                    wordConjugationRepository.save(wc);
+                }
+            });
+        }
+
+        // Step 4: Synonyms & Antonyms
+        if (wordDto.getSynonyms() != null) {
+            for (String syn : wordDto.getSynonyms()) {
+                Word synonymWord = wordRepository.findByWord(syn)
+                        .orElseGet(() -> wordRepository.save(new Word(syn, wordDto.getLevel())));
+                wordRelationRepository.save(new WordRelation(wordId, synonymWord.getId(), "SYNONYM"));
+            }
+        }
+
+        if (wordDto.getAntonyms() != null) {
+            for (String ant : wordDto.getAntonyms()) {
+                Word antonymWord = wordRepository.findByWord(ant)
+                        .orElseGet(() -> wordRepository.save(new Word(ant, wordDto.getLevel())));
+                wordRelationRepository.save(new WordRelation(wordId, antonymWord.getId(), "ANTONYM"));
+            }
+        }
+
+        // Step 5: Assign to user
+        assignWordsToUser(UserWordRequest.builder()
+                .userId(userId)
+                .wordIds(List.of(wordId))
+                .build());
+
+    }
+// logic for translation requests
+    @Transactional
+    public WordDto translateWord(String inputWord, String sourceLangCode, String targetLangCode) {
+        // 1️⃣ Redis lookup first
+        Optional<WordDto> cached = redisService.getCachedTranslation(sourceLangCode, targetLangCode, inputWord);
+        if (cached.isPresent()) return cached.get();
+
+        // 2️⃣ Load language entities
+        //better check method??
+        Language sourceLang = languageRepository.findByCode(sourceLangCode)
+                .orElseThrow(() -> new IllegalArgumentException("Unsupported source language: " + sourceLangCode));
+        Language targetLang = languageRepository.findByCode(targetLangCode)
+                .orElseThrow(() -> new IllegalArgumentException("Unsupported target language: " + targetLangCode));
+
+        // 3️⃣ Try to find the word in DB (exact, forms, conjugations)
+        Optional<WordDto> sourceWordOpt = searchAndReturnWord(inputWord);
+        if (sourceWordOpt.isEmpty()) {
+            throw new IllegalArgumentException("Source word not found in " + sourceLangCode + ": " + inputWord);
+        }
+        Word sourceWord = wordRepository.findById(sourceWordOpt.get().getId()).orElseThrow();
+
+        // 4️⃣ Check existing translation mapping
+        Optional<WordTranslation> translationOpt = wordTranslationRepository.findTranslation(sourceWord, sourceLang, targetLang);
+        if (translationOpt.isPresent()) {
+            Word targetWord = translationOpt.get().getTargetWord();
+            WordDto targetDto = getFullWord(targetWord.getId());
+            redisService.cacheTranslation(sourceLangCode, targetLangCode, inputWord, targetDto);
+            return targetDto;
+        }
+
+        // 5️⃣ No translation found → check if word exists in target language DB
+        Optional<WordDto> targetFromDb = wordRepository.findByWordAndLanguage(inputWord, targetLang)
+                .map(w -> getFullWord(w.getId()));
+
+        if (targetFromDb.isPresent()) {
+            cacheAndLinkTranslation(sourceWord, targetFromDb.get(), sourceLang, targetLang, inputWord);
+            return targetFromDb.get();
+        }
+
+        // 6️⃣ Fallback to LLM (generate translation)
+        //Add prompt builder for translation
+        WordDto translated = llmService.generateTranslatedWord(inputWord, sourceLangCode, targetLangCode);
+
+        // 7️⃣ Save translated word + link
+        Word targetWord = saveAndAssignWord(translated);
+        wordTranslationRepository.save(
+                WordTranslation.builder()
+                        .sourceWord(sourceWord)
+                        .targetWord(targetWord)
+                        .sourceLanguage(sourceLang)
+                        .targetLanguage(targetLang)
+                        .createdAt(Instant.now())
+                        .build()
+        );
+
+        // 8️⃣ Cache it
+        redisService.cacheTranslation(sourceLangCode, targetLangCode, inputWord, translated);
+
+        return translated;
+    }
+
+    private void cacheAndLinkTranslation(Word sourceWord, WordDto targetDto,
+                                         Language srcLang, Language tgtLang, String inputWord) {
+        Word targetWord = wordRepository.findById(targetDto.getId()).orElseThrow();
+        wordTranslationRepository.save(
+                WordTranslation.builder()
+                        .sourceWord(sourceWord)
+                        .targetWord(targetWord)
+                        .sourceLanguage(srcLang)
+                        .targetLanguage(tgtLang)
+                        .createdAt(Instant.now())
+                        .build()
+        );
+        redisService.cacheTranslation(srcLang.getCode(), tgtLang.getCode(), inputWord, targetDto);
+    }
+
+    // ---------------- 5. SEARCH ----------------
+    //extend for language parameter //also with level?
+    //or we can have two different methods? one for search and one for translation
+    @Transactional(readOnly = true)
+    public Optional<WordDto> searchAndReturnWord(String input) {
+        // Step 1: Check in main word table
+        Optional<Word> baseWord = wordRepository.findByWord(input);
+        if (baseWord.isPresent()) {
+            return Optional.of(getFullWord(baseWord.get().getId()));
+        }
+
+        // Step 2: Check in word_forms (V2, V3, Future)
+        Optional<WordForm> form = wordFormRepository.findByForm(input);
+        if (form.isPresent()) {
+            return Optional.of(getFullWord(form.get().getId()));
+        }
+
+        // Step 3: Check in word_conjugations
+        Optional<WordConjugation> conj = wordConjugationRepository.findByForm(input);
+        if (conj.isPresent()) {
+            return Optional.of(getFullWord(conj.get().getWord().getId()));
+        }
+
+        // Step 4: Not found → let LLM handle
+        return Optional.empty();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<UserWord> findUserWord(UUID userId, Long wordId) {
+        return userWordRepository.findByUserIdAndWordId(userId, wordId);
     }
 
     @Transactional
-    @Cacheable(value = "wordEnhancements", key = "#wordText")
-    public WordEnhanceResponse getEnhancedWord(String wordText) {
-        // 1. Check database for existing word data
-        Optional<Word> existingWordOpt = wordRepository.findByWordText(wordText);
-
-        if (existingWordOpt.isPresent()) {
-            Word existingWord = existingWordOpt.get();
-            log.info("Returning cached word data for: {}", wordText);
-            return mapToResponse(existingWord);
-        }
-
-        // 2. Call LLM to generate data
-        log.info("Calling LLM to generate enhanced word data for: {}", wordText);
-        String prompt = SYSTEM_PROMPT.replace("<Word>", wordText);
-        String rawResponse = null;
-        try {
-            rawResponse = callLlmApi(prompt);
-            return processAndSaveWord(wordText, rawResponse);
-        } catch (IOException | InterruptedException e) {
-            log.error("Failed to generate or parse word enhancement for {}: {}", wordText, e.getMessage());
-            throw new RuntimeException("Failed to get enhanced word data from AI.", e);
-        }
+    public void updateUserWordBox(UserWord userWord, Box newBox) {
+        userWord.setBox(newBox);
+        userWord.setLastSeen(LocalDateTime.now());
+        userWord.setNextReview(LocalDateTime.now().plusDays(newBox.getIntervalDays()));
+        userWordRepository.save(userWord);
     }
 
-    private WordEnhanceResponse processAndSaveWord(String wordText, String rawResponse) throws IOException {
-        // Parse the raw response and save to database
-        Word newWord = new Word();
-        newWord.setWordText(wordText);
-        newWord.setLanguage("de");
-
-        JsonNode rootNode = objectMapper.readTree(rawResponse);
-        newWord.setV2(rootNode.path("V2").asText());
-        newWord.setV3(rootNode.path("V3").asText());
-        newWord.setFutureTense(rootNode.path("Future").asText());
-
-        // This requires careful parsing of the LLM's structured text output
-        // For simplicity, we assume a JSON object in the future
-        // newWord.setPredicateInflections(rootNode.path("Predicate Inflections"));
-        // newWord.setSynonyms(parseList(rootNode.path("Synonyms")));
-        // newWord.setAntonyms(parseList(rootNode.path("Antonyms")));
-
-        wordRepository.save(newWord);
-
-        // Process and save examples
-        // This is a simplified example, a real implementation would be more robust
-        List<WordExample> examples = new ArrayList<>();
-        // Save examples based on the parsed response
-        wordExampleRepository.saveAll(examples);
-
-        return mapToResponse(newWord);
-    }
-
-    private WordEnhanceResponse mapToResponse(Word word) {
-        List<WordExampleDto> exampleDtos = wordExampleRepository.findByWordId(word.getId()).stream()
-                .map(example -> new WordExampleDto(example.getExampleText(), example.getExampleType(), example.getPersona()))
-                .collect(Collectors.toList());
-
-        List<String> synonyms = word.getSynonyms() != null ? word.getSynonyms() : new ArrayList<>();
-        List<String> antonyms = word.getAntonyms() != null ? word.getAntonyms() : new ArrayList<>();
-
-        return new WordEnhanceResponse(word.getWordText(), word.getV2(), word.getV3(), word.getFutureTense(), word.getPredicateInflections(), synonyms, antonyms, exampleDtos, null);
-    }
-
-    private String callLlmApi(String prompt) throws IOException, InterruptedException {
-        String jsonPayload = String.format("{\"prompt\": \"%s\"}", prompt);
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(llmApiUrl))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+    @Transactional
+    public void createUserWord(User user, Word word, Box initBox) {
+        UserWord userWord = UserWord.builder()
+                .user(user)
+                .word(word)
+                .language(word.getLanguage())
+                .level(word.getLevel())
+                .box(initBox)
+                .lastSeen(LocalDateTime.now())
+                .nextReview(LocalDateTime.now().plusDays(initBox.getIntervalDays()))
                 .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        userWordRepository.save(userWord);
+    }
 
-        if (response.statusCode() != 200) {
-            log.error("LLM API returned non-200 status: {}", response.statusCode());
-            log.error("Response body: {}", response.body());
-            throw new RuntimeException("LLM API call failed with status code: " + response.statusCode());
-        }
-
-        JsonNode rootNode = objectMapper.readTree(response.body());
-        return rootNode.path("response").asText();
+    @Transactional(readOnly = true)
+    public List<UserWord> findDueWords(Long userId, LocalDateTime now) {
+        return userWordRepository.findDueWords(userId, now);
     }
 }

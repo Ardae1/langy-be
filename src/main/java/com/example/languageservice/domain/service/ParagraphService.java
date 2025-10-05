@@ -43,7 +43,7 @@ public class ParagraphService {
         this.redisService = redisService;
         this.llmService = llmService;
     }
-
+// where the includeUserWords is used?
     @Transactional
     public ParagraphResponse generateParagraph(ParagraphRequest request) throws IOException, InterruptedException {
         UUID userId = getCurrentUserId();
@@ -62,7 +62,7 @@ public class ParagraphService {
         // 2. Postgres superset search (on user_paragraphs)
         List<Paragraph> supersetMatches = userParagraphRepository.findSupersetMatch(words.toArray(new String[0]));
         if (!supersetMatches.isEmpty()) {
-            Paragraph para = supersetMatches.get(0);
+            Paragraph para = supersetMatches.getFirst();
             return linkUser(userId, para.getId(), toParagraphResponse(para, request.getSelectedWords()), request.getSelectedWords());
         }
 
@@ -70,7 +70,7 @@ public class ParagraphService {
         String tsQuery = String.join(" & ", words);
         List<Paragraph> contentMatches = paragraphRepository.searchByContent(tsQuery);
         if (!contentMatches.isEmpty()) {
-            Paragraph para = contentMatches.get(0);
+            Paragraph para = contentMatches.getFirst();
             return linkUser(userId, para.getId(), toParagraphResponse(para, request.getSelectedWords()), request.getSelectedWords());
         }
 

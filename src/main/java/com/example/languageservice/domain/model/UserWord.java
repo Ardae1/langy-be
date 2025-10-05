@@ -1,10 +1,8 @@
 package com.example.languageservice.domain.model;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.Instant;
@@ -16,6 +14,7 @@ import java.util.UUID;
 @Entity
 @Table(name = "user_words")
 @Data
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class UserWord {
@@ -24,15 +23,30 @@ public class UserWord {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "user_id", nullable = false)
-    private UUID userId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
-    @Column(name = "word", nullable = false)
-    private String word;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "word_id", nullable = false)
+    private Word word;
 
-    @Column(name = "box", nullable = false)
-    private int box;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "language_id", nullable = false)
+    private Language language;
 
-    @Column(name = "review_date", nullable = false)
-    private Instant reviewDate;
+    @Enumerated(EnumType.STRING)
+    private LanguageLevel level;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "box_id")
+    private Box box;
+
+    @Column(name = "last_seen", nullable = false)
+    private Instant lastSeen;
+    @Column(name = "accuracy", nullable = false)
+    private double accuracy;
+
+    @Column(name = "created_at", nullable = false)
+    private double createdAt;
 }

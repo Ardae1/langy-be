@@ -5,25 +5,32 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
  * Repository for the UserWord entity.
  */
+
+// queries should be tailored for language based search.
 @Repository
-public interface UserWordRepository extends JpaRepository<UserWord, java.util.UUID> {
+public interface UserWordRepository extends JpaRepository<UserWord, Long> {
+    boolean existsByUserIdAndWordId(UUID userId, Long wordId);
 
-    /**
-     * Custom query to find words due for review for a specific user. This
-     * method directly addresses the performance optimization mentioned in the
-     * API flows by fetching only the necessary words with a limit.
-     *
-     * @param userId The user's ID.
-     * @return A list of UserWord entities.
-     */
-    java.util.Optional<UserWord> findByUserIdAndWord(UUID userId, String word);
+    List<UserWord> findByUserId(UUID userId);
+    @Query("""
+        SELECT uw FROM UserWord uw
+        WHERE uw.user.id = :userId
+        AND uw.lastSeen + b.intervalDays * 1 DAY <= :now
+        """)
+    List<UserWord> findDueWords(@Param("userId") UUID userId,
+                                     @Param("now") LocalDateTime now);
+    @Query("SELECT uw FROM UserWord uw WHERE uw.user.id = :userId AND uw.word.id = :wordId")
+    Optional<UserWord> findByUserIdAndWordId(UUID userId, Long wordId);
 
-    @Query("SELECT uw FROM UserWord uw WHERE uw.userId = :userId AND uw.reviewDate <= :now ORDER BY uw.reviewDate ASC")
-    List<UserWord> findWordsForReview(@Param("userId") UUID userId, @Param("now") java.time.Instant now);
+    @Query("SELECT uw FROM UserWord uw WHERE uw.user.id = :userId AND uw.box.id = :boxId")
+    List<UserWord> findByUserAndBox(@Param("userId") Long userId, @Param("boxId") Long boxId);
 }
